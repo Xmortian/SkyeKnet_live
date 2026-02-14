@@ -15,9 +15,9 @@
  // Need to fix and polish turn based system on button press,
   move confirmation has been added
 
-  // Need to implement Reset Mode (Two buttons pressed)
-  // Polish Texts 
-  
+  // Need to implement Reset Mode (Two buttons pressed) added, need to check edge cases
+  // Polish Texts ( added )
+
  
  * Uppercase = White pieces (RNBQKP)
  * Lowercase = Black pieces (rnbqkp)
@@ -434,6 +434,7 @@ void handleSerialCommands() {
       if (row >= 0 && row < 8 && col >= 0 && col < 8) {
         Serial.print("Placing piece on ");
         Serial.println(square);
+        sensorPrev[row][col] = sensorState[row][col];
         sensorState[row][col] = true;
       }
     }
@@ -597,72 +598,189 @@ void setup() {
 void loop() {
   unsigned long currentMillis = millis();
   
-// 1. Handle button presses for clock control AND move confirmation
-if (digitalRead(BTN_P1) == LOW) {
-  delay(50); // Debounce
-  if (whiteTurn) {
-    moveConfirmedByButton = true; // White confirms their move
+  // 1. Handle button presses for clock control AND move confirmation
+  if (digitalRead(BTN_P1) == LOW) {
+    delay(50); // Debounce
+    if (whiteTurn) {
+      moveConfirmedByButton = true; // White confirms their move
+    }
+    if (!gameStarted) {
+      gameStarted = true;
+      lastTick = millis();
+    }
   }
-  if (!gameStarted) {
-    gameStarted = true;
-    lastTick = millis();
+
+  if (digitalRead(BTN_P2) == LOW) {
+    delay(50); // Debounce
+    if (!whiteTurn) {
+      moveConfirmedByButton = true; // Black confirms their move
+    }
+    if (!gameStarted) {
+      gameStarted = true;
+      lastTick = millis();
+    }
   }
+  
+// 2. Update clock every second
+if (gameStarted && (currentMillis - lastTick >= 1000)) {
+  lastTick = currentMillis;
+  if (p1Turn && p1Time > 0) p1Time--;
+  else if (!p1Turn && p2Time > 0) p2Time--;
+  updateClock();
 }
 
-if (digitalRead(BTN_P2) == LOW) {
-  delay(50); // Debounce
-  if (!whiteTurn) {
-    moveConfirmedByButton = true; // Black confirms their move
+// NEW: Reset system - both buttons held for 3 seconds
+static unsigned long bothButtonsPressedTime = 0;
+static bool resetInProgress = false;
+
+if (digitalRead(BTN_P1) == LOW && digitalRead(BTN_P2) == LOW) {
+  if (!resetInProgress) {
+    bothButtonsPressedTime = millis();
+    resetInProgress = true;
+    Serial.println("Hold both buttons to reset...");
+    displayStaticInfo("RESET MODE", "Hold 3 seconds");
   }
-  if (!gameStarted) {
-    gameStarted = true;
-    lastTick = millis();
-  }
-}
-  // 2. Update clock every second
-  if (gameStarted && (currentMillis - lastTick >= 1000)) {
-    lastTick = currentMillis;
-    if (p1Turn && p1Time > 0) p1Time--;
-    else if (!p1Turn && p2Time > 0) p2Time--;
+  
+  if (millis() - bothButtonsPressedTime >= 3000) {
+    // RESET EVERYTHING
+    Serial.println("\n*** RESETTING GAME ***");
+    
+    // Reset board
+    for (int row = 0; row < 8; row++){
+      for (int col = 0; col < 8; col++){
+        board[row][col] = initialBoard[row][col];
+        if (initialBoard[row][col] != ' ') {
+          sensorState[row][col] = true;
+          sensorPrev[row][col] = true;
+        } else {
+          sensorState[row][col] = false;
+          sensorPrev[row][col] = false;
+        }
+      }
+    }
+    
+    // Reset game state
+    whiteTurn = true;
+    gameOver = false;
+    winner = ' ';
+    gameStarted = false;
+    p1Turn = true;
+    
+    // Reset clocks
+    p1Time = 300;
+    p2Time = 300;
     updateClock();
+    
+    // Reset castling rights
+    whiteKingMoved = false;
+    whiteRookKingsideMoved = false;
+    whiteRookQueensideMoved = false;
+    blackKingMoved = false;
+    blackRookKingsideMoved = false;
+    blackRookQueensideMoved = false;
+    
+    // Reset en passant
+    enPassantCol = -1;
+    enPassantRow = -1;
+    
+    // Clear LEDs
+    FastLED.clear();
+    FastLED.show();
+    
+    // Reset display
+    displayStaticInfo("GAME RESET!", "Ready to Play");
+    delay(2000);
+    displayStaticInfo("Game Status:", "Press to Start");
+    
+    Serial.println("Game reset complete. WHITE's turn to move.");
+    Serial.println("Please ensure all pieces are in starting positions.");
+    
+    resetInProgress = false;
+    bothButtonsPressedTime = 0;
+    
+    // Wait for buttons to be released
+    while (digitalRead(BTN_P1) == LOW || digitalRead(BTN_P2) == LOW) {
+      delay(50);
+    }
+    delay(200); // Extra debounce
   }
+} else {
+  resetInProgress = false;
+  bothButtonsPressedTime = 0;
+}
+
 
   // 3. Cycle through display information
   if (currentMillis - lastDisplayUpdate >= displayUpdateInterval) {
     lastDisplayUpdate = currentMillis;
     
     switch(displayState) {
-      case 0:
-        // Show current turn
-        displayStaticInfo("Current Turn:", p1Turn ? "> WHITE PLAYER" : "> BLACK PLAYER");
+      case 0: {
+        // Show current turn with piece count
+        if (!gameOver) {
+        int whitePieces = countPieces('w');
+        int blackPieces = countPieces('b');
+        char line2[17];
+        sprintf(line2, "W:%d B:%d", whitePieces, blackPieces);
+        displayStaticInfo(whiteTurn ? "> WHITE's TURN" : "> BLACK's TURN", line2);
         break;
-      case 1:
-        // Random AI interjection (20% chance)
+        }
+      }
+
+      case 1: {
+        // Random AI interjection (20% chance) OR show material
+        if (!gameOver) {
         if(isAIPlaying && (random(0, 5) == 1)) {
           playAIDialogue(aiRandomLines[random(0, 8)], false); // false = fast scroll
         } else {
-          // Skip to next state if no AI dialogue
-          displayState++;
-          lastDisplayUpdate = currentMillis - displayUpdateInterval;
-          return;
+          // Show material advantage
+          int materialDiff = calculateMaterial();
+          char line2[17];
+          if (materialDiff > 0) {
+            sprintf(line2, "White +%d", materialDiff);
+          } else if (materialDiff < 0) {
+            sprintf(line2, "Black +%d", -materialDiff);
+          } else {
+            sprintf(line2, "Equal");
+          }
+          displayStaticInfo("Material:", line2);
         }
         break;
-      case 2:
+        }
+      }
+      
+      case 2: {
         // Show time remaining
+        if (!gameOver) {
         displayClockInfo();
         break;
-      case 3:
+        }
+      }
+      
+      case 3: {
         // Show game status
-        if (!gameStarted) {
+        if (gameOver) {
+          // Checkmate happened
+          displayStaticInfo("CHECKMATE!", winner == 'w' ? "White Wins!" : "Black Wins!");
+        } else if (!gameStarted) {
           displayStaticInfo("Game Status:", "Press to Start");
+        } else if (isKingInCheck('w')) {
+          displayStaticInfo("WARNING!", "White in Check!");
+        } else if (isKingInCheck('b')) {
+          displayStaticInfo("WARNING!", "Black in Check!");
         } else if (p1Time == 0) {
           displayStaticInfo("TIME UP!", "Black Wins!");
+          gameOver = true;
+          winner = 'b';
         } else if (p2Time == 0) {
           displayStaticInfo("TIME UP!", "White Wins!");
+          gameOver = true;
+          winner = 'w';
         } else {
           displayStaticInfo("Game Status:", "In Progress");
         }
         break;
+      }
     }
     
     displayState = (displayState + 1) % 4;
@@ -682,7 +800,7 @@ if (digitalRead(BTN_P2) == LOW) {
   }
 
   // Look for piece pickup
-for (int row = 0; row < 8; row++) {
+  for (int row = 0; row < 8; row++) {
     for (int col = 0; col < 8; col++) {
       if (sensorPrev[row][col] && !sensorState[row][col]) {
         char piece = board[row][col];
@@ -707,6 +825,30 @@ for (int row = 0; row < 8; row++) {
         Serial.print("Piece type: ");
         Serial.println(piece);
         
+        // NEW: Don't allow moves before game starts
+        if (!gameStarted) {
+          Serial.println("Game not started! WHITE must press their button to begin.");
+          sensorState[row][col] = true; // Force piece back
+          sensorPrev[row][col] = true;
+          FastLED.clear();
+          FastLED.show();
+          continue;
+        }
+
+        // NEW: Don't allow moves if time ran out
+          if (p1Time == 0 || p2Time == 0) {
+            Serial.println("Game over - time expired!");
+            sensorState[row][col] = true; // Force piece back
+            sensorPrev[row][col] = true;
+            FastLED.clear();
+            FastLED.show();
+            if (!gameOver) {
+              gameOver = true;
+              winner = (p1Time == 0) ? 'b' : 'w';
+            }
+            continue;
+          }
+
         int moveCount = 0;
         int moves[30][2];
         getPossibleMoves(row, col, moveCount, moves);
@@ -756,6 +898,8 @@ for (int row = 0; row < 8; row++) {
         
         int targetRow = -1, targetCol = -1;
         bool piecePlaced = false;
+        bool pieceReturnedEarly = false;  // NEW FLAG
+
         
         unsigned long startWait = millis();
         const unsigned long waitTimeout = 30000;
@@ -765,10 +909,18 @@ for (int row = 0; row < 8; row++) {
           if (!WOKWI_TEST_MODE) { 
             readSensors(); 
           }
+
+        // Check if piece was returned to origin
+        if (sensorState[row][col] && !pieceReturnedEarly) {  // Changed condition
+          pieceReturnedEarly = true;
+          Serial.println("Piece returned to original square.");
+          break;
+        }
           
           for (int r2 = 0; r2 < 8; r2++) {
             for (int c2 = 0; c2 < 8; c2++) {
-              if (sensorState[r2][c2] && !sensorPrev[r2][c2]) {
+              // Look for NEW piece placement (not at origin)
+              if (sensorState[r2][c2] && !sensorPrev[r2][c2] && !(r2 == row && c2 == col)) {
                 targetRow = r2; 
                 targetCol = c2;
                 piecePlaced = true;
@@ -777,20 +929,28 @@ for (int row = 0; row < 8; row++) {
             }
             if (piecePlaced) break;
           }
-          
+                  
           FastLED.show();
           delay(10);
         }
-        
-        if (!piecePlaced) {
-          Serial.println("Move timeout - piece not placed!");
-          FastLED.clear();
-          FastLED.show();
-          sensorState[row][col] = true;
-          sensorPrev[row][col] = true;
-          continue;
-        }
 
+      // NEW: Handle early return FIRST
+      if (pieceReturnedEarly) {
+        sensorPrev[row][col] = true;
+        FastLED.clear();
+        FastLED.show();
+        continue;  // Allow lifting another piece
+      }
+
+        
+      if (!piecePlaced) {
+        Serial.println("Move timeout - piece not placed!");
+        FastLED.clear();
+        FastLED.show();
+        sensorState[row][col] = true;
+        sensorPrev[row][col] = true;
+        continue;
+      }
         Serial.print("Piece placed at ");
         Serial.print((char)('a' + targetCol));
         Serial.println(targetRow + 1);
@@ -811,29 +971,38 @@ for (int row = 0; row < 8; row++) {
 
           if (legal) {
             // NEW: Wait for button confirmation BEFORE executing move
-            Serial.print(whiteTurn ? "WHITE" : "BLACK");
-            Serial.println(" - Press your button to confirm move!");
-            
-            moveConfirmedByButton = false;
-            unsigned long confirmWait = millis();
-            
-            while (!moveConfirmedByButton && (millis() - confirmWait < 10000)) {
-              if (digitalRead(whiteTurn ? BTN_P1 : BTN_P2) == LOW) {
-                moveConfirmedByButton = true;
-                
-                // Start game clock on first button press
-                if (!gameStarted) {
-                  gameStarted = true;
-                  lastTick = millis();
-                  p1Turn = true;  // Start White's clock
+// NEW: Wait for button confirmation BEFORE executing move
+Serial.print(whiteTurn ? "WHITE" : "BLACK");
+Serial.println(" - Press your button to confirm move!");
 
-                  Serial.println("Game clock started!");
-                }
-                
-                delay(200); // Debounce
-              }
-              delay(10);
-            }
+moveConfirmedByButton = false;
+unsigned long confirmWait = millis();
+
+while (!moveConfirmedByButton && (millis() - confirmWait < 10000)) {
+  // Update clock while waiting for confirmation
+  unsigned long currentMillis = millis();
+  if (gameStarted && (currentMillis - lastTick >= 1000)) {
+    lastTick = currentMillis;
+    if (p1Turn && p1Time > 0) p1Time--;
+    else if (!p1Turn && p2Time > 0) p2Time--;
+    updateClock();
+  }
+  
+  if (digitalRead(whiteTurn ? BTN_P1 : BTN_P2) == LOW) {
+    moveConfirmedByButton = true;
+    
+    // Start game clock on first button press (White's first move)
+    if (!gameStarted) {
+      gameStarted = true;
+      lastTick = millis();
+      p1Turn = true;  // Start White's clock
+      Serial.println("Game clock started! White's clock running.");
+    }
+    
+    delay(200); // Debounce
+  }
+  delay(10);
+}
             
             if (!moveConfirmedByButton) {
               Serial.println("Move timeout - no button confirmation!");
@@ -1387,4 +1556,37 @@ void displayStaticInfo(const char* top, const char* bottom) {
   lcd.print("                "); // Clear line 2 manually
   lcd.setCursor(0, 1);
   lcd.print(bottom);
+}
+int countPieces(char color) {
+  int count = 0;
+  for (int r = 0; r < 8; r++) {
+    for (int c = 0; c < 8; c++) {
+      char piece = board[r][c];
+      if (piece == ' ') continue;
+      char pieceColor = (piece >= 'a' && piece <= 'z') ? 'b' : 'w';
+      if (pieceColor == color) count++;
+    }
+  }
+  return count;
+}
+
+int calculateMaterial() {
+  int whiteMaterial = 0, blackMaterial = 0;
+  for (int r = 0; r < 8; r++) {
+    for (int c = 0; c < 8; c++) {
+      char piece = board[r][c];
+      if (piece == ' ') continue;
+      
+      int value = 0;
+      char p = (piece >= 'a' && piece <= 'z') ? piece - 32 : piece;
+      if (p == 'P') value = 1;
+      else if (p == 'N' || p == 'B') value = 3;
+      else if (p == 'R') value = 5;
+      else if (p == 'Q') value = 9;
+      
+      if (piece >= 'a' && piece <= 'z') blackMaterial += value;
+      else whiteMaterial += value;
+    }
+  }
+  return whiteMaterial - blackMaterial;
 }
