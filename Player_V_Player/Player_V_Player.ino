@@ -17,6 +17,7 @@
 
   // Need to implement Reset Mode (Two buttons pressed) added, need to check edge cases
   // Polish Texts ( added )
+  // LED animation fixes
 
  
  * Uppercase = White pieces (RNBQKP)
@@ -496,16 +497,26 @@ void handleSerialCommands() {
     else if (cmd == "LEDS") {
       showLEDPattern();
     }
-    else if (cmd == "HELP") {
-      Serial.println("\n=== Wokwi Test Commands ===");
-      Serial.println("LIFT e2      - Lift piece from e2");
-      Serial.println("PLACE e4     - Place piece on e4");
-      Serial.println("MOVE e2 e4   - Complete move");
-      Serial.println("BOARD        - Show current board");
-      Serial.println("LEDS         - Show LED pattern");
-      Serial.println("HELP         - Show this help");
-      Serial.println("===========================\n");
-    }
+else if (cmd == "HELP") {
+  Serial.println("\n=== Wokwi Test Commands ===");
+  Serial.println("LIFT e2      - Lift piece from e2");
+  Serial.println("PLACE e4     - Place piece on e4");
+  Serial.println("MOVE e2 e4   - Complete move");
+  Serial.println("BOARD        - Show current board");
+  Serial.println("LEDS         - Show LED pattern");
+  Serial.println("ANIM         - Test start animation");
+  Serial.println("FIRE         - Test firework animation");
+  Serial.println("HELP         - Show this help");
+  Serial.println("===========================\n");
+}
+else if (cmd == "ANIM") {
+  Serial.println("Playing start game animation...");
+  startGameAnimation();
+}
+else if (cmd == "FIRE") {
+  Serial.println("Playing firework animation...");
+  fireworkAnimation();
+}
   }
 }
 
@@ -573,23 +584,27 @@ void setup() {
     }
   }
 
-  Serial.println("Simulating initial board setup...");
-  for (int row = 0; row < 8; row++){
-    for (int col = 0; col < 8; col++){
-      if (initialBoard[row][col] != ' ') {
-        sensorState[row][col] = true;
-        sensorPrev[row][col] = true;
-      } else {
-        sensorState[row][col] = false;
-        sensorPrev[row][col] = false;
-      }
+Serial.println("Simulating initial board setup...");
+for (int row = 0; row < 8; row++){
+  for (int col = 0; col < 8; col++){
+    if (initialBoard[row][col] != ' ') {
+      sensorState[row][col] = true;
+      sensorPrev[row][col] = true;
+    } else {
+      sensorState[row][col] = false;
+      sensorPrev[row][col] = false;
     }
   }
-  
-  fireworkAnimation();
-  Serial.println("Board ready! System initialized.");
-  Serial.println("WHITE's turn to move.");
-  Serial.println("Type 'HELP' for available commands.");
+}
+
+// Play firework animation AFTER board setup
+Serial.println("Playing startup animation...");
+fireworkAnimation();
+delay(500);
+
+Serial.println("Board ready! System initialized.");
+Serial.println("WHITE's turn to move.");
+Serial.println("Type 'HELP' for available commands.");
 }
 
 // ---------------------------
@@ -997,6 +1012,11 @@ while (!moveConfirmedByButton && (millis() - confirmWait < 10000)) {
       lastTick = millis();
       p1Turn = true;  // Start White's clock
       Serial.println("Game clock started! White's clock running.");
+      
+      // NEW: Play start game animation
+      displayStaticInfo("GAME START!", "Good Luck!");
+      startGameAnimation();
+      delay(500);
     }
     
     delay(200); // Debounce
@@ -1164,21 +1184,73 @@ void readSensors() {
 }
 
 void fireworkAnimation() {
+  // Expanding color wave from center to edges
+  CRGB colors[] = {CRGB::Red, CRGB::Orange, CRGB::Yellow, CRGB::Green, CRGB::Blue, CRGB::Purple};
+  int colorIndex = 0;
+  
   float centerX = 3.5; 
   float centerY = 3.5;
-  for (float radius = 0; radius < 6; radius += 0.5) {
+  
+  // Expand outward
+  for (float radius = 0; radius <= 6; radius += 0.3) {
     FastLED.clear();
     for (int row = 0; row < 8; row++) {
       for (int col = 0; col < 8; col++) {
         float dist = sqrt(pow(col - centerX, 2) + pow(row - centerY, 2));
-        if (fabs(dist - radius) < 0.5) {
-          leds[getPixelIndex(row, col)] = CRGB::White;
+        if (dist <= radius) {
+          // Color based on distance from center
+          int idx = getPixelIndex(row, col);
+          leds[idx] = colors[colorIndex % 6];
         }
       }
     }
     FastLED.show();
-    delay(100);
+    colorIndex++;
+    delay(50);
   }
+  
+  delay(200);
+  
+  // Contract back to center
+  for (float radius = 6; radius >= 0; radius -= 0.3) {
+    FastLED.clear();
+    for (int row = 0; row < 8; row++) {
+      for (int col = 0; col < 8; col++) {
+        float dist = sqrt(pow(col - centerX, 2) + pow(row - centerY, 2));
+        if (dist <= radius) {
+          int idx = getPixelIndex(row, col);
+          leds[idx] = colors[(colorIndex + 3) % 6];
+        }
+      }
+    }
+    FastLED.show();
+    colorIndex++;
+    delay(50);
+  }
+  
+  FastLED.clear();
+  FastLED.show();
+}
+void startGameAnimation() {
+  // Fast sequential green wave across all 64 squares
+  for (int i = 0; i < LED_COUNT; i++) {
+    leds[i] = CRGB::Green;
+    FastLED.show();
+    delay(15); // 15ms per LED = ~1 second total
+  }
+  
+  // Brief pause with all lit
+  delay(300);
+  
+  // Quick flash
+  FastLED.clear();
+  FastLED.show();
+  delay(100);
+  fill_solid(leds, LED_COUNT, CRGB::Green);
+  FastLED.show();
+  delay(200);
+  
+  // Clear
   FastLED.clear();
   FastLED.show();
 }
