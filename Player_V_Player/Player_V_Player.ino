@@ -28,7 +28,7 @@
 #define NUM_ROWS 8
 #define NUM_COLS 8
 #define LED_COUNT 64
-#define BRIGHTNESS 100
+#define BRIGHTNESS 100 // Must lower the brighness when testing on real hardware
 #define LED_PIN 19
 #define BUZZER_PIN 18 
 #define WOKWI_TEST_MODE true
